@@ -1,19 +1,28 @@
+# FUNCTIONS TO FIT A BETA-T-EGARCH MODEL
 
-score_beta_t_EGARCH <- function(y, lambda_t, nu){
-  # return score of variance sigma^2 of Student-t distribution 
+# the procedure starts by computing a general expression for the loglikelihood of the model
+# the loglikelihood is then maximized via a quasi-Newton algorithm, obtaining optimal parameters
+# given the optimal parameters, the TVP is filtered and the likelihood, the conditional score
+# and the standardized residuals are computed
+
+
+score_beta_t_EGARCH <- function(y, lambda, nu){
+  # return score of lambda of Student-t distribution 
+  # lambda is the vector of the time-varying parameter
   
-  u_t <- ((nu + 1) * y^2) / ((nu - 2) * exp(lambda_t) + y^2) - 1
-  
+  u_t <- ((nu + 1) * y^2) / ((nu - 2) * exp(lambda) + y^2) - 1
   return(u_t)
 }
 
 
-loglik_beta_t_EGARCH <- function(y, lambda_t, nu, log = TRUE){
-  # compute Student-t log-density
+loglik_beta_t_EGARCH <- function(y, lambda, nu, log = TRUE){
+  # compute log-density of Student's t distribution with nu degrees of freedom
+  # by default returns log-likelihood, if likelihood is required set log=FALSE
   
-  ulpdf <- (lgamma((nu+1)/2) - lgamma(nu/2) - (1/2) * lambda_t -
-              (1/2)  * log(pi*(nu-2)) - ((nu+1)/2) * log(1 + y^2 / ((nu-2)*exp(lambda_t)) ))
+  ulpdf <- (lgamma((nu+1)/2) - lgamma(nu/2) - (1/2)*lambda -
+              (1/2) * log(pi*(nu-2)) - ((nu+1)/2) * log(1 + y^2 / ((nu-2)*exp(lambda)) ))
   
+  # if log-likelihood not required, compute likelihood
   if(log != TRUE){
     ulpdf <- exp(ulpdf)
   } 
@@ -22,56 +31,61 @@ loglik_beta_t_EGARCH <- function(y, lambda_t, nu, log = TRUE){
 }
 
 
-
 filter_beta_t_EGARCH <- function(y, theta){
-  # returns the filter of the time-varying scale parameter 
+  # returns the filter of the time-varying scale parameter, the innovation 
+  # series and the likelihood of the model
+  # the vector theta must contain: intercept, autoregressive coeff, score coeff 
+  # and degrees of freedom, in that order
   
   T <- length(y)
   
   # Define log likelihoods
-  dloglik <- array(data = NA, dim = c(T))
-  loglik  <- numeric()
+  dloglik <- numeric(T)
+  loglik  <- 0
   
-  # parameter selections
+  # parameter selections from theta vector
   omega <- theta[1]
   phi   <- theta[2]
   k     <- theta[3]
   nu    <- theta[4]
   
-  # define dynamic scale and score
-  lambda_t <- array(data = NA, dim = c(T+1))
-  sigma_t <- array(data = NA, dim = c(T+1))
-  u_t      <- array(data = NA, dim = c(T))
+  # define dynamic scale, volatility and conditional score
+  lambda <- numeric(T)
+  sigma  <- numeric(T)
+  u      <- numeric(T)
   
   # initialize dynamic scale
-  lambda_t[1] <- omega/(1-phi)
-  sigma_t[1] <- exp(lambda_t[1]/2)
+  # take unconditional expectation of the autoregressive process
+  lambda[1] <- omega/(1-phi)
+  sigma[1]  <- exp(lambda[1]/2)
   
-  # initialize log likelihood
-  dloglik[1] <- loglik_beta_t_EGARCH(y[1], lambda_t[1], nu = nu, log = TRUE)
+  # initialize log density and log likelihood
+  dloglik[1] <- loglik_beta_t_EGARCH(y[1], lambda[1], nu = nu, log = TRUE)
   loglik     <- dloglik[1]
   
   for(t in 2:(T)) {
     # dynamic scale innovations
-    u_t[t-1] <- score_beta_t_EGARCH(y[t-1], lambda_t[t-1], nu)
-    # updating filter                    
-    lambda_t[t] <- omega + phi * lambda_t[t-1] + k * u_t[t-1]
-    sigma_t[t] <- exp(lambda_t[t]/2)
+    u[t-1] <- score_beta_t_EGARCH(y[t-1], lambda[t-1], nu)
     
-    if(t < (T+1)){
-      #Updating likelihoods
-      dloglik[t] <- loglik_beta_t_EGARCH(y[t], lambda_t = lambda_t[t], nu = nu, log = TRUE)
-      loglik     <- loglik + dloglik[t]
-    }
+    # updating filter                    
+    lambda[t] <- omega + phi * lambda[t-1] + k * u[t-1]
+    sigma[t]  <- exp(lambda[t]/2)
+    
+    #Updating log density series and log likelihood
+    dloglik[t] <- loglik_beta_t_EGARCH(y[t], lambda=lambda[t], nu=nu, log=TRUE)
+    loglik     <- loglik + dloglik[t]
   }
   
-  # output
-  lambda_t <- ts(lambda_t, start = start(y), frequency = frequency(y))
-  sigma_t <- ts(sigma_t, start = start(y), frequency = frequency(y))
-  u_t <- ts(u_t, start = start(y), frequency = frequency(y))
+  # compute conditional score for last period
+  u[T] <- score_beta_t_EGARCH(y[T], lambda[T], nu)
   
-  out <- list(Dynamic_Scale    = sigma_t,
-              Innovation_u_t   = u_t,
+  # output
+  lambda <- ts(lambda, start = start(y), frequency = frequency(y))
+  sigma  <- ts(sigma, start = start(y), frequency = frequency(y))
+  u      <- ts(u, start = start(y), frequency = frequency(y))
+  
+  out <- list(Dynamic_Scale    = sigma,
+              Innovation_u_t   = u,
               Log_Densities_i  = dloglik,
               Log_Likelihood   = loglik)
   
@@ -79,19 +93,13 @@ filter_beta_t_EGARCH <- function(y, theta){
 }
 
 
-filtered_loglik_beta_t_EGARCH <- function(dati, param){
+filtered_loglik_beta_t_EGARCH <- function(param, data){
+  # the function returns the value of the log-likelihood of the model obtained
+  # after filtering the time-varying scale parameter with some prespecified
+  # static parameters
   
-  # Parameter Selections Dynamic Location
-  omega <- param[1]
-  phi   <- param[2]
-  k     <- param[3]
-  nu    <- param[4]
-  
-  # Create a new vector with the parameters
-  theta_new <- c(omega, phi, k, nu)
-  
-  # Fitness Functions
-  fitness <- filter_beta_t_EGARCH(dati, theta_new)$Log_Likelihood
+  # extract log-likelihood
+  fitness <- filter_beta_t_EGARCH(data, param)$Log_Likelihood
   
   if(is.na(fitness) | !is.finite(fitness)) fitness <- -1e10
   if(fitness != fitness) fitness <- -1e10
@@ -100,45 +108,30 @@ filtered_loglik_beta_t_EGARCH <- function(dati, param){
 } 
 
 
-estimator_beta_t_EGARCH <- function(dati, param){
+estimator_beta_t_EGARCH <- function(data, param){
+  # computes the optimal static parameters iteratively, starting with a set of
+  # given values and by maximizing the log-likelihood obtained by filtering the 
+  # time-varying scale parameter
   
-  # Parameter Selections Dynamic Location
-  omega <- param[1]
-  phi   <- param[2]
-  k     <- param[3]
-  nu    <- param[4]
+  # parameter constraints for Beta-t-EGARCH (only stationarity)
+  lower <- c(-Inf, -0.99, -Inf, 2.099)
+  upper <- c(Inf,  0.99,  Inf, 100)
   
-  # Create a vector with the parameters
-  theta_st <- c(omega, phi, k, nu)
-  
-  # Take Bounds
-  lower <- c(-Inf, -0.999, -2, 2.099)
-  upper <- c(Inf,  0.999,  2, 300)
- 
-  # Optimize every Filters w/nlminb 
-  optimizer <- suppressWarnings(nlminb(start = theta_st, objective = filtered_loglik_beta_t_EGARCH, 
-                                       dati  = dati, gradient = NULL, 
+  # Optimize parameters w/nlminb (quasi-Newton, similar to L-BFGS-B)
+  optimizer <- suppressWarnings(nlminb(start = param, objective = filtered_loglik_beta_t_EGARCH, 
+                                       data  = data, gradient = NULL, 
                                        control = list(trace = 0), hessian = NULL,
                                        lower = lower, upper = upper))
   
-  # Save the optimized parameters Dynamic Location
-  omega_opt <- optimizer$par[1]  
-  phi_opt   <- optimizer$par[2]
-  k_opt     <- optimizer$par[3]
-  nu_opt    <- optimizer$par[4]
-  
-  # Create a vector with all the optimized parameters
-  theta_opt <- c(omega_opt, phi_opt, k_opt, nu_opt)
-  
   # Create a list with all the optimized parameters
-  theta_list <- list(omega = omega_opt,
-                     phi   = phi_opt,
-                     k     = k_opt,
-                     nu    = nu_opt)
+  theta_list <- list(omega = optimizer$par[1],
+                     phi   = optimizer$par[2],
+                     k     = optimizer$par[3],
+                     nu    = optimizer$par[4])
   
-  # Output
+  # Output 
   out <- list(theta_list = theta_list,
-              theta      = theta_opt,
+              theta      = optimizer$par,
               optimizer  = optimizer)
   
   return(out) 
