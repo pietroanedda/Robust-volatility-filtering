@@ -1,6 +1,6 @@
-# NASDAQ-100 Volatility Analysis (2020-2024)
+# Volatility Analysis of Financial Data 
 
-This repository contains the code and the final report for an advanced time series analysis project. The main goal is to study the variability and the volatility dynamics of the NASDAQ-100 index during the 2020-2024 period.
+This repository contains the code for an advanced time series analysis project. The main goal is to study the variability and the volatility dynamics of the NASDAQ-100 index during the 2020-2024 period.
 
 ## Project Description
 The analysis focuses on the daily log-returns of the NASDAQ-100. Empirical data highlights the "volatility clustering" phenomenon and heavy leptokurtosis (heavy tails), which invalidate the classic assumption of normally distributed returns. 
